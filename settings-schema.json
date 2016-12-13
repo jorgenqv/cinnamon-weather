@@ -3,7 +3,7 @@
   { "type": "button"
   , "description": "Get WOEID"
   , "callback": "woeidLookup"
-  , "tooltip": "http://edg3.co.uk/snippets/weather-location-codes/"
+  , "tooltip": "http://woeid.rosselliot.co.nz/"
   }
 , "woeid":
   { "type": "entry"
@@ -21,7 +21,7 @@
     }
   }
 , "windSpeedUnit":
-  { "type": "radiogroup"
+  { "type": "combobox"
   , "default": "kph"
   , "description": "Wind speed unit"
   , "options":
@@ -31,15 +31,44 @@
     , "knots": "knots"
     }
   }
+, "pressureUnit":
+  { "type": "combobox"
+  , "default": "mbar"
+  , "description": "Atmospheric pressure unit"
+  , "options":
+    { "mbar": "mbar"
+    , "in Hg": "in Hg"
+    , "mm Hg": "mm Hg"
+    , "psi": "psi"
+    , "at": "at"
+    , "atm": "atm"
+    , "Pa": "Pa"
+    , "kPa": "kPa"
+    }
+  }
+, "verticalOrientation":
+  { "type": "checkbox"
+  , "default": false
+  , "description": "Vertical orientation"
+  }
 , "showSunrise":
   { "type": "checkbox"
   , "default": true
   , "description": "Show sunrise / sunset times"
   }
-, "showFivedayForecast":
+, "show24Hours":
   { "type": "checkbox"
   , "default": false
-  , "description": "Show 5-day forecast"
+  , "description": "Display time in 24 hour format"
+  }
+, "forecastDays":
+  { "type": "spinbutton"
+  , "default": 2
+  , "min": 2
+  , "max": 7
+  , "units": "days"
+  , "step": 1
+  , "description": "Forecast length"
   }
 , "translateCondition":
   { "type": "checkbox"
@@ -67,11 +96,13 @@
   , "description": "Override location label"
   }
 , "refreshInterval":
-  { "type": "scale"
+  { "type": "spinbutton"
   , "default": 15
   , "min": 1
   , "max": 360
+  , "units": "minutes"
   , "step": 5
-  , "description": "Update interval (minutes)"
+  , "description": "Update interval"
   }
 }
+

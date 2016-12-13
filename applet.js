@@ -44,7 +44,7 @@ const Util = imports.misc.util
 const UUID = "weather@mockturtl"
 const APPLET_ICON = "view-refresh-symbolic"
 const CMD_SETTINGS = "cinnamon-settings applets " + UUID
-const WOEID_URL = "http://edg3.co.uk/snippets/weather-location-codes/"
+const WOEID_URL = "http://woeid.rosselliot.co.nz"
 const CMD_WOEID_LOOKUP = "xdg-open " + WOEID_URL
 
 // Conversion Factors
@@ -59,7 +59,7 @@ const EN_DASH = '\u2013'
 
 // Query
 const QUERY_PARAMS = '?format=json&q=select '
-const QUERY_TABLE = 'feednormalizer where url="http://xml.weather.yahoo.com/forecastrss/'
+const QUERY_TABLE = 'weather.forecast'
 const QUERY_VIEW = '*'
 const QUERY_URL = 'http://query.yahooapis.com/v1/public/yql' + QUERY_PARAMS + QUERY_VIEW + ' from ' + QUERY_TABLE
 
@@ -68,11 +68,14 @@ const QUERY_URL = 'http://query.yahooapis.com/v1/public/yql' + QUERY_PARAMS + QU
 const WEATHER_CITY_KEY = 'locationLabelOverride'
 const WEATHER_REFRESH_INTERVAL = 'refreshInterval'
 const WEATHER_SHOW_COMMENT_IN_PANEL_KEY = 'showCommentInPanel'
+const WEATHER_VERTICAL_ORIENTATION_KEY = 'verticalOrientation'
 const WEATHER_SHOW_SUNRISE_KEY = 'showSunrise'
-const WEATHER_SHOW_FIVEDAY_FORECAST_KEY = 'showFivedayForecast'
+const WEATHER_SHOW_24HOURS_KEY = 'show24Hours'
+const WEATHER_FORECAST_DAYS = 'forecastDays'
 const WEATHER_SHOW_TEXT_IN_PANEL_KEY = 'showTextInPanel'
 const WEATHER_TRANSLATE_CONDITION_KEY = 'translateCondition'
 const WEATHER_TEMPERATURE_UNIT_KEY = 'temperatureUnit'
+const WEATHER_PRESSURE_UNIT_KEY = 'pressureUnit'
 const WEATHER_USE_SYMBOLIC_ICONS_KEY = 'useSymbolicIcons'
 const WEATHER_WIND_SPEED_UNIT_KEY = 'windSpeedUnit'
 const WEATHER_WOEID_KEY = 'woeid'
@@ -83,11 +86,14 @@ const KEYS = [
   WEATHER_CITY_KEY,
   WEATHER_WOEID_KEY,
   WEATHER_TRANSLATE_CONDITION_KEY,
+  WEATHER_VERTICAL_ORIENTATION_KEY,
   WEATHER_SHOW_TEXT_IN_PANEL_KEY,
   WEATHER_SHOW_COMMENT_IN_PANEL_KEY,
   WEATHER_SHOW_SUNRISE_KEY,
-  WEATHER_SHOW_FIVEDAY_FORECAST_KEY,
-  WEATHER_REFRESH_INTERVAL
+  WEATHER_SHOW_24HOURS_KEY,
+  WEATHER_FORECAST_DAYS,
+  WEATHER_REFRESH_INTERVAL,
+  WEATHER_PRESSURE_UNIT_KEY
 ]
 
 // Signals
@@ -129,6 +135,39 @@ const WeatherWindSpeedUnits = {
   MPS: 'm/s',
   KNOTS: 'knots'
 }
+
+const WeatherPressureResponseUnits = {
+  MBAR: 'mb',
+  PSI: 'in'
+}
+
+const WeatherPressureUnits = {
+  MBAR: 'mbar',
+  MMHG: 'mm Hg',
+  INHG: 'in Hg',
+  PA: 'Pa',
+  KPA: 'kPa',
+  PSI: 'psi',
+  ATM: 'atm',
+  AT: 'at'
+}
+
+// Pressure conversion factors
+const WEATHER_CONV_KPA_IN_MBAR = 0.1
+const WEATHER_CONV_PA_IN_MBAR = 100
+const WEATHER_CONV_MMHG_IN_MBAR = 750.0615613e-3
+const WEATHER_CONV_INHG_IN_MBAR = 2.952998307e-2
+const WEATHER_CONV_AT_IN_MBAR = 1.019716213e-3
+const WEATHER_CONV_ATM_IN_MBAR = 0.986923169e-3
+const WEATHER_CONV_PSI_IN_MBAR = 14.5037738e-3
+
+const WEATHER_CONV_MBAR_IN_INHG = 3.3863886667e+1
+const WEATHER_CONV_KPA_IN_INHG = 3.386389
+const WEATHER_CONV_PA_IN_INHG = 3.386389e+3
+const WEATHER_CONV_MMHG_IN_INHG = 25.4
+const WEATHER_CONV_PSI_IN_INHG = 491.154152e-3
+const WEATHER_CONV_AT_IN_INHG = 34.531554e-3
+const WEATHER_CONV_ATM_IN_INHG = 33.421054e-3
 
 //----------------------------------------------------------------------
 //
@@ -204,12 +243,12 @@ MyApplet.prototype = {
     // Override Methods: TextIconApplet
 , _init: function _init(orientation, panelHeight, instanceId) {
     Applet.TextIconApplet.prototype._init.call(this, orientation, panelHeight, instanceId)
-      
+
       // Interface: TextIconApplet
       this.set_applet_icon_name(APPLET_ICON)
       this.set_applet_label(_("..."))
       this.set_applet_tooltip(_("Click to open"))
-      
+
       // PopupMenu
       this.menuManager = new PopupMenu.PopupMenuManager(this)
       this.menu = new Applet.AppletPopupMenu(this, orientation)
@@ -234,13 +273,12 @@ MyApplet.prototype = {
         this.updateIconType()
         this._applet_icon.icon_type = this._icon_type
         this._currentWeatherIcon.icon_type = this._icon_type
-        let daysToShow = this._showFivedayForecast ? 5 : 2
-        for (let i = 0; i < daysToShow; i++) {
+        for (let i = 0; i < this._forecastDays; i++) {
           this._forecast[i].Icon.icon_type = this._icon_type
         }
         this.refreshWeather(false)
       }))
- 
+
       // configuration via context menu is automatically provided in Cinnamon 2.0+
       let cinnamonVersion = Config.PACKAGE_VERSION.split('.')
       let majorVersion = parseInt(cinnamonVersion[0])
@@ -319,8 +357,8 @@ MyApplet.prototype = {
   //----------------------------------------------------------------------
 
 , updateIconType: function updateIconType() {
-    this._icon_type = this.settings.getValue(WEATHER_USE_SYMBOLIC_ICONS_KEY) ? 
-                        St.IconType.SYMBOLIC : 
+    this._icon_type = this.settings.getValue(WEATHER_USE_SYMBOLIC_ICONS_KEY) ?
+                        St.IconType.SYMBOLIC :
                         St.IconType.FULLCOLOR
   }
 
@@ -349,13 +387,13 @@ MyApplet.prototype = {
     //this.dumpKeys()
     this.loadJsonAsync(this.weatherUrl(), function(json) {
       try {
-        let weather = json.get_object_member('query').get_object_member('results').get_object_member('rss').get_object_member('channel')
+        let weather = json.get_object_member('query').get_object_member('results').get_object_member('channel')
         let weather_c = weather.get_object_member('item').get_object_member('condition')
         let forecast = weather.get_object_member('item').get_array_member('forecast').get_elements()
 
         let location = weather.get_object_member('location').get_string_member('city')
-        if (this._city != null && this._city.length > 0)
-          location = this._city
+        if (this.nonempty(this._locationLabelOverride))
+          location = this._locationLabelOverride
 
         // Refresh current weather
         let comment = weather_c.get_string_member('text')
@@ -365,17 +403,15 @@ MyApplet.prototype = {
         let humidity = weather.get_object_member('atmosphere').get_string_member('humidity') + ' %'
 
         let pressure = weather.get_object_member('atmosphere').get_string_member('pressure')
-        let pressure_unit = weather.get_object_member('units').get_string_member('pressure')
-
-        let sunrise = weather.get_object_member('astronomy').get_string_member('sunrise')
-        let sunset = weather.get_object_member('astronomy').get_string_member('sunset')
+        //let pressure_unit = weather.get_object_member('units').get_string_member('pressure')
+        //log('pressure: ' + pressure + ' ' + pressure_unit)
 
         let temperature = weather_c.get_string_member('temp')
 
         let wind = weather.get_object_member('wind').get_string_member('speed')
         let wind_chill = weather.get_object_member('wind').get_string_member('chill')
         let wind_direction = this.compassDirection(weather.get_object_member('wind').get_string_member('direction'))
-        let wind_unit = weather.get_object_member('units').get_string_member('speed')
+        //let wind_unit = weather.get_object_member('units').get_string_member('speed')
 
         let iconname = this.weatherIconSafely(weather_c.get_string_member('code'))
         this._currentWeatherIcon.icon_name = iconname
@@ -396,7 +432,6 @@ MyApplet.prototype = {
         this._currentWeatherSummary.text = comment
         this._currentWeatherTemperature.text = temperature + ' ' + this.unitToUnicode()
         this._currentWeatherHumidity.text = humidity
-        this._currentWeatherPressure.text = pressure + ' ' + pressure_unit
 
         // Override wind units with our preference
         // Need to consider what units the Yahoo API has returned it in
@@ -405,7 +440,6 @@ MyApplet.prototype = {
             // Round to whole units
             if (this._temperatureUnit == WeatherUnits.FAHRENHEIT) {
               wind = Math.round (wind / WEATHER_CONV_MPH_IN_MPS * WEATHER_CONV_KPH_IN_MPS)
-              wind_unit = 'km/h'
             }
             // Otherwise no conversion needed - already in correct units
             break
@@ -413,7 +447,6 @@ MyApplet.prototype = {
             // Round to whole units
             if (this._temperatureUnit == WeatherUnits.CELSIUS) {
               wind = Math.round (wind / WEATHER_CONV_KPH_IN_MPS * WEATHER_CONV_MPH_IN_MPS)
-              wind_unit = 'mph'
             }
             // Otherwise no conversion needed - already in correct units
             break
@@ -424,35 +457,113 @@ MyApplet.prototype = {
             } else {
               wind = Math.round ((wind / WEATHER_CONV_MPH_IN_MPS) * 10)/ 10
             }
-            wind_unit = 'm/s'
             break
           case WeatherWindSpeedUnits.KNOTS:
             // Round to whole units
-            if (this._temperatureUnit == WeatherUnits.CELSIUS)
+            if (this._temperatureUnit == WeatherUnits.CELSIUS) {
               wind = Math.round (wind / WEATHER_CONV_KPH_IN_MPS * WEATHER_CONV_KNOTS_IN_MPS)
-            else
+            } else {
               wind = Math.round (wind / WEATHER_CONV_MPH_IN_MPS * WEATHER_CONV_KNOTS_IN_MPS)
-            wind_unit = 'knots'
+            }
             break
         }
-        this._currentWeatherWind.text = (wind_direction ? wind_direction + ' ' : '') + wind + ' ' + wind_unit
+        this._currentWeatherWind.text = (wind_direction ? wind_direction + ' ' : '') + wind + ' ' + _(this._windSpeedUnit)
+
+        // Override wind chill units with our preference
+        // Yahoo API always returns Fahrenheit
+        if (this._temperatureUnit == WeatherUnits.CELSIUS) {
+          wind_chill = Math.round((wind_chill - 32) / 1.8)
+        }
         this._currentWeatherWindChill.text = wind_chill + ' ' + this.unitToUnicode()
 
+        // Yahoo API returns values which are off by a factor of inHg to mbar
+        pressure = pressure * WEATHER_CONV_INHG_IN_MBAR
+
+        // Override pressure units with our preference
+        // Need to consider what units the Yahoo API has returned it in
+        switch (this._pressureUnit) {
+          case WeatherPressureUnits.MBAR:
+            if (this._temperatureUnit == WeatherUnits.FAHRENHEIT) {
+              pressure = pressure * WEATHER_CONV_MBAR_IN_INHG
+            }
+            // Otherwise no conversion needed - already in correct units
+            pressure = parseFloat(pressure).toFixed(2)
+            break
+          case WeatherPressureUnits.INHG:
+            if (this._temperatureUnit == WeatherUnits.CELSIUS) {
+              pressure = pressure * WEATHER_CONV_INHG_IN_MBAR
+            }
+            // Otherwise no conversion needed - already in correct units
+            pressure = parseFloat(pressure).toFixed(2)
+            break
+          case WeatherPressureUnits.PSI:
+            if (this._temperatureUnit == WeatherUnits.CELSIUS) {
+              pressure = pressure * WEATHER_CONV_PSI_IN_MBAR
+            } else {
+              pressure = pressure * WEATHER_CONV_PSI_IN_INHG
+            }
+            pressure = parseFloat(pressure).toFixed(3)
+            break
+          case WeatherPressureUnits.MMHG:
+            if (this._temperatureUnit == WeatherUnits.CELSIUS) {
+              pressure = pressure * WEATHER_CONV_MMHG_IN_MBAR
+            } else {
+              pressure = pressure * WEATHER_CONV_MMHG_IN_INHG
+            }
+            pressure = Math.round(pressure)
+            break
+          case WeatherPressureUnits.AT:
+            if (this._temperatureUnit == WeatherUnits.CELSIUS) {
+              pressure = pressure * WEATHER_CONV_AT_IN_MBAR
+            } else {
+              pressure = pressure * WEATHER_CONV_AT_IN_INHG
+            }
+            pressure = pressure.toFixed(4)
+            break
+          case WeatherPressureUnits.ATM:
+            if (this._temperatureUnit == WeatherUnits.CELSIUS) {
+              pressure = pressure * WEATHER_CONV_ATM_IN_MBAR
+            } else {
+              pressure = pressure * WEATHER_CONV_ATM_IN_INHG
+            }
+            pressure = pressure.toFixed(4)
+            break
+          case WeatherPressureUnits.PA:
+            if (this._temperatureUnit == WeatherUnits.CELSIUS) {
+              pressure = pressure * WEATHER_CONV_PA_IN_MBAR
+            } else {
+              pressure = pressure * WEATHER_CONV_PA_IN_INHG
+            }
+            pressure = Math.round(pressure)
+            break
+          case WeatherPressureUnits.KPA:
+            if (this._temperatureUnit == WeatherUnits.CELSIUS) {
+              pressure = pressure * WEATHER_CONV_KPA_IN_MBAR
+            } else {
+              pressure = pressure * WEATHER_CONV_KPA_IN_INHG
+            }
+            pressure = parseFloat(pressure).toFixed(2)
+            break
+        }
+        this._currentWeatherPressure.text = pressure + ' ' + _(this._pressureUnit)
+
         // location is a button
-        this._currentWeatherLocation.style_class = STYLE_LOCATION_LINK
         this._currentWeatherLocation.url = weather.get_string_member('link')
         this._currentWeatherLocation.label = _(location)
 
         // gettext can't see these inline
         let sunriseText = _('Sunrise')
         let sunsetText = _('Sunset')
-        this._currentWeatherSunrise.text = this._showSunrise ? (sunriseText + ': ' + sunrise) : ''
-        this._currentWeatherSunset.text = this._showSunrise ? (sunsetText + ': ' + sunset) : ''
+
+        let astronomyJson = weather.get_object_member('astronomy')
+        let sunriseTime = this.formatAstronomyTime(astronomyJson, 'sunrise')
+        let sunsetTime = this.formatAstronomyTime(astronomyJson, 'sunset')
+
+        this._currentWeatherSunrise.text = this._showSunrise ? (sunriseText + ': ' + sunriseTime ) : ''
+        this._currentWeatherSunset.text = this._showSunrise ? (sunsetText + ': ' + sunsetTime) : ''
 
         // Refresh forecast
-        // let date_string = [_('Today'), _('Tomorrow')]
-        let daysToShow = this._showFivedayForecast ? 5 : 2
-        for (let i = 0; i < daysToShow; i++) {
+        for (let i = 0; i < this._forecastDays; i++) {
           let forecastUi = this._forecast[i]
           let forecastData = forecast[i].get_object()
 
@@ -479,6 +590,46 @@ MyApplet.prototype = {
         this.refreshWeather(true)
       }))
     }
+  }
+
+, normalizeMinutes: function normalizeMinutes(timeStr) {
+    // verify expected time format
+    let result = timeStr.match(/^\d{1,2}:(\d{1,2}) [ap]m$/)
+
+    if (result != null) {
+      let minutes = result[1]
+      // single-digit minutes values need normalizing (zero-padding)
+      if (minutes.length < 2) {
+        let timeSegments = timeStr.split(':')
+        return timeSegments[0] + ':0' + timeSegments[1]
+      }
+    }
+
+    return timeStr
+  }
+
+, convertTo24: function convertTo24(timeStr) {
+    let s = timeStr.indexOf(':')
+    let t = timeStr.indexOf(' ')
+    let n = timeStr.length
+    let hh = timeStr.substr(0, s)
+    let mm = timeStr.substring(s + 1, t)
+
+    if (parseInt(hh) < 10) // pad
+      hh = '0' + hh
+
+    let beforeNoon = timeStr.substr(n - 2).toLowerCase() == 'am'
+    if (beforeNoon) {
+      if (hh == '12') // 12 AM -> 00
+        hh = '00'
+
+      return hh + ':' + mm
+    }
+
+    if (hh == '12') // 12 PM -> ok
+      return hh + ':' + mm
+
+    return (parseInt(hh, 10) + 12).toString() + ':' + mm
   }
 
 , destroyCurrentWeather: function destroyCurrentWeather() {
@@ -523,17 +674,21 @@ MyApplet.prototype = {
 
     this._currentWeatherLocation = new St.Button({
       reactive: true,
-      label: _('Please wait')
+      label: _('Refresh')
     })
+
+    this._currentWeatherLocation.style_class = STYLE_LOCATION_LINK
 
     // link to the details page
     this._currentWeatherLocation.connect(SIGNAL_CLICKED, Lang.bind(this, function() {
-      if (this._currentWeatherLocation.url == null)
-        return
-      Gio.app_info_launch_default_for_uri(
-        this._currentWeatherLocation.url,
-        global.create_app_launch_context()
-      )
+      if (this._currentWeatherLocation.url == null) {
+        this.refreshWeather(false)
+      } else {
+        Gio.app_info_launch_default_for_uri(
+          this._currentWeatherLocation.url,
+          global.create_app_launch_context()
+        )
+      }
     }))
 
     let bb = new St.BoxLayout({
@@ -609,11 +764,10 @@ MyApplet.prototype = {
     this.destroyFutureWeather()
 
     this._forecast = []
-    this._forecastBox = new St.BoxLayout()
+    this._forecastBox = new St.BoxLayout({ vertical: this._verticalOrientation })
     this._futureWeather.set_child(this._forecastBox)
 
-    let daysToShow = this._showFivedayForecast ? 5 : 2
-    for (let i = 0; i < daysToShow; i++) {
+    for (let i = 0; i < this._forecastDays; i++) {
       let forecastWeather = {}
 
       forecastWeather.Icon = new St.Icon({
@@ -666,8 +820,8 @@ MyApplet.prototype = {
   }
 
 , weatherUrl: function weatherUrl() {
-    //let output = QUERY_URL + ' where location="' + this._woeid + '" and u="' + this.unitToUrl() + '"'
-    let output = QUERY_URL + this._woeid + '_' + this.unitToUrl() + '.xml"' 
+    let output = QUERY_URL + ' where woeid="' + this._woeid + '" and u="' + this.unitToUrl() + '"'
+    //let output = QUERY_URL + this._woeid + '_' + this.unitToUrl() + '.xml"'
     return output
   }
 
@@ -789,6 +943,10 @@ MyApplet.prototype = {
     return Gtk.IconTheme.get_default().has_icon(icon + (this._icon_type == St.IconType.SYMBOLIC ? '-symbolic' : ''))
   }
 
+, nonempty: function(str) {
+    return (str != null && str.length > 0)
+  }
+
 , weatherCondition: function(code) {
     switch (parseInt(code, 10)){
       case 0:/* tornado */
@@ -898,6 +1056,13 @@ MyApplet.prototype = {
     let directions = [_('N'), _('NE'), _('E'), _('SE'), _('S'), _('SW'), _('W'), _('NW')]
     return directions[Math.round(deg / 45) % directions.length]
   }
+
+, formatAstronomyTime: function(astronomyJson, key) {
+    let val = astronomyJson.get_string_member(key)
+    let pad = this.normalizeMinutes(val)
+    return this._show24Hours ? (this.convertTo24(pad)) : pad
+  }
+
 }
 
 //----------------------------------------------------------------------
@@ -910,3 +1075,4 @@ function main(metadata, orientation, panelHeight, instanceId) {
   //log("v" + metadata.version + ", cinnamon " + Config.PACKAGE_VERSION)
   return new MyApplet(metadata, orientation, panelHeight, instanceId)
 }
+
